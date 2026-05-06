@@ -277,7 +277,7 @@ async def _search_trace(
 
     results: list[ResponseAgentTraceEntry] = []
     for _, entry in scored[:top_k]:
-        results.append(ResponseAgentTraceEntry(entry))
+        results.append(ResponseAgentTraceEntry(**entry.model_dump(), source="trace"))
 
     return results
 
@@ -309,7 +309,7 @@ async def _fetch_graph_context(
     if not snapshot:
         return []
 
-    return [ResponseGraphContextEntry(content=snapshot)]
+    return [ResponseGraphContextEntry(content=snapshot, source="graph_context")]
 
 
 async def recall(
