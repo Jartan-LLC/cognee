@@ -57,7 +57,7 @@ services:
       - DEBUG=false # Change to true if debugging
       - ENVIRONMENT=local
       - LOG_LEVEL=INFO
-      - TRANSPORT_MODE=sse
+      - TRANSPORT_MODE=http
       # Database configuration - should match the main cognee service
       - DB_PROVIDER=${DB_PROVIDER:-sqlite}
       - DB_HOST=${DB_HOST:-host.docker.internal}
