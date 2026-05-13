@@ -71,8 +71,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000" # MCP port
-      - "5678:5678" # MCP debugger port
+      - 8000 # MCP port
+      - 5678 # MCP debugger port
     deploy:
       resources:
         limits:
@@ -95,7 +95,7 @@ services:
       - ./cognee-frontend/src:/app/src
       - ./cognee-frontend/public:/app/public
     ports:
-      - 3000:3000
+      - 3000
       # - 9229:9229 # Debugging
     networks:
       - cognee-network
@@ -107,8 +107,8 @@ services:
     profiles:
       - neo4j
     ports:
-      - 7474:7474
-      - 7687:7687
+      - 7474
+      - 7687
     environment:
       - NEO4J_AUTH=neo4j/pleaseletmein
       - NEO4J_PLUGINS=["apoc", "graph-data-science"]
@@ -132,7 +132,7 @@ services:
     networks:
       - cognee-network
     ports:
-      - "3002:8000"
+      - 3002
 
   postgres:
     image: pgvector/pgvector:pg17
@@ -146,7 +146,7 @@ services:
       POSTGRES_DB: cognee_db
       # - postgres_data:/var/lib/postgresql/data
     ports:
-      - 5432:5432
+      - 5432
     networks:
       - cognee-network
 
@@ -156,7 +156,7 @@ services:
     profiles:
       - redis
     ports:
-      - "6379:6379"
+      - 6379
     networks:
       - cognee-network
     volumes:
@@ -169,7 +169,7 @@ services:
     container_name: redisinsight
     restart: always
     ports:
-      - "5540:5540"
+      - 5540
     networks:
       - cognee-network
 
