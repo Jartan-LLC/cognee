@@ -43,6 +43,7 @@ services:
   # Cognee MCP Server - Model Context Protocol server for IDE integration
   cognee-mcp:
     container_name: cognee-mcp
+    user: root
     profiles:
       - mcp
     networks:
