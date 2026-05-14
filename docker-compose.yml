@@ -54,7 +54,7 @@ services:
     volumes:
       - .env:/app/.env
       - ./cognee:/app/cognee
-      - cognee_mcp_storage:/app/cognee/storage
+      - cognee_mcp_storage:/app/.cognee_storage
       # Uncomment to allow ingestion of local files from host:
       # - /path/to/your/data:/data
     environment:
