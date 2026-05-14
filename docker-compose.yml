@@ -60,7 +60,10 @@ services:
       - DEBUG=false # Change to true if debugging
       - ENVIRONMENT=local
       - LOG_LEVEL=INFO
-      - TRANSPORT_MODE=http
+      - TRANSPORT_MODE=${TRANSPORT_MODE:-http}
+      - MCP_DISABLE_DNS_REBINDING_PROTECTION=${MCP_DISABLE_DNS_REBINDING_PROTECTION:-false}
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS}
+      - MCP_CORS_ALLOW_ORIGINS=${MCP_CORS_ALLOW_ORIGINS}
       # Database configuration - should match the main cognee service
       - DB_PROVIDER=${DB_PROVIDER:-sqlite}
       - DB_HOST=${DB_HOST:-host.docker.internal}
