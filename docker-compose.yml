@@ -54,6 +54,7 @@ services:
     volumes:
       - .env:/app/.env
       - ./cognee:/app/cognee
+      - cognee_mcp_storage:/app/cognee/storage
       # Uncomment to allow ingestion of local files from host:
       # - /path/to/your/data:/data
     environment:
@@ -74,6 +75,10 @@ services:
       # MCP specific configuration
       - MCP_LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+      # Storage directories
+      - DATA_ROOT_DIRECTORY=${DATA_ROOT_DIRECTORY}
+      - SYSTEM_ROOT_DIRECTORY=${SYSTEM_ROOT_DIRECTORY}
+      - CACHE_ROOT_DIRECTORY=${CACHE_ROOT_DIRECTORY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -194,3 +199,4 @@ volumes:
   chromadb_data:
   postgres_data:
   redis_data:
+  cognee_mcp_storage:
