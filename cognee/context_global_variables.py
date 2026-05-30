@@ -93,16 +93,7 @@ def backend_access_control_enabled():
 
 
 VECTOR_DBS_WITH_MULTI_USER_SUPPORT = ["lancedb", "pgvector", "falkor"]
-GRAPH_DBS_WITH_MULTI_USER_SUPPORT = ["ladybug", "kuzu", "falkor"]
-
-
-def is_multi_user_support_possible():
-    graph_config = get_graph_context_config()
-    vector_config = get_vectordb_context_config()
-    return (
-        graph_config["graph_database_provider"] in GRAPH_DBS_WITH_MULTI_USER_SUPPORT
-        and vector_config["vector_db_provider"] in VECTOR_DBS_WITH_MULTI_USER_SUPPORT
-    )
+GRAPH_DBS_WITH_MULTI_USER_SUPPORT = ["ladybug", "kuzu", "falkor", "postgres"]
 
 
 class DatabaseContextManager:
@@ -160,6 +151,9 @@ class DatabaseContextManager:
             "vector_db_password": dataset_database.vector_database_connection_info.get(
                 "password", ""
             ),
+            # Inherit subprocess mode from the global config so that per-dataset DB wrappers
+            # are also spawned as subprocesses when the feature is enabled.
+            "vector_db_subprocess_enabled": get_vectordb_config().vector_db_subprocess_enabled,
         }
 
         graph_config = {
@@ -176,8 +170,23 @@ class DatabaseContextManager:
             "graph_database_password": dataset_database.graph_database_connection_info.get(
                 "graph_database_password", ""
             ),
-            "graph_dataset_database_handler": "",
-            "graph_database_port": "",
+            "graph_database_host": dataset_database.graph_database_connection_info.get(
+                "graph_database_host", ""
+            ),
+            "graph_database_allow_anonymous": dataset_database.graph_database_connection_info.get(
+                "graph_database_allow_anonymous",
+                get_graph_config().graph_database_allow_anonymous,
+            ),
+            "graph_dataset_database_handler": dataset_database.graph_dataset_database_handler,
+            "graph_database_port": dataset_database.graph_database_connection_info.get(
+                "graph_database_port", ""
+            ),
+            # Inherit subprocess mode and Kuzu tuning from the global config so that
+            # per-dataset DB wrappers are spawned with matching settings.
+            "graph_database_subprocess_enabled": get_graph_config().graph_database_subprocess_enabled,
+            "kuzu_num_threads": get_graph_config().kuzu_num_threads,
+            "kuzu_buffer_pool_size": get_graph_config().kuzu_buffer_pool_size,
+            "kuzu_max_db_size": get_graph_config().kuzu_max_db_size,
         }
 
         storage_config = {
@@ -215,13 +224,12 @@ class DatabaseContextManager:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        # Lazily import to avoid circular imports at module load.
+        if not backend_access_control_enabled():
+            return None
+
         from cognee.infrastructure.databases.dataset_queue import dataset_queue
 
-        # Release the slot for this dataset when exiting the context.
-        if backend_access_control_enabled():
-            dataset_queue().release_slot_for(self._dataset)
-        return None
+        await dataset_queue().release_slot_for(self._dataset)
 
 
 def set_database_global_context_variables(

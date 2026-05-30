@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from cognee.infrastructure.databases.vector.pgvector.PGVectorAdapter import PGVectorAdapter
 from cognee.modules.storage.utils import JSONEncoder
 from cognee.modules.graph.models.EdgeType import EdgeType
+from cognee.modules.graph.utils.prepare_edges_for_storage import get_edge_retrieval_text
 from cognee.modules.engine.utils.generate_edge_id import generate_edge_id
 
 logger = get_logger()
@@ -249,6 +250,19 @@ class PostgresHybridAdapter(GraphDBInterface, VectorDBInterface):
     # Hybrid: combined graph+vector writes
     # ------------------------------------------------------------------
 
+    def _resolve_batch_size(self, items: List) -> int:
+        """Positive batch size for chunking ``items`` through ``embed_data``.
+
+        Falls back to ``len(items)`` (single-batch call) when
+        ``get_batch_size()`` returns None, 0, or a negative int — those
+        values would otherwise either crash ``range()`` or silently drop
+        embeddings by causing it to skip all iterations.
+        """
+        raw = self._vector.embedding_engine.get_batch_size()
+        if isinstance(raw, int) and raw > 0:
+            return raw
+        return len(items)
+
     async def add_nodes_with_vectors(self, data_points: List[DataPoint]) -> None:
         """Insert nodes into graph and their embeddings into vector tables
         in a single database transaction.
@@ -284,7 +298,10 @@ class PostgresHybridAdapter(GraphDBInterface, VectorDBInterface):
             if not valid_items:
                 continue
             texts = [t for _, t in valid_items]
-            vectors = await self._vector.embed_data(texts)
+            batch_size = self._resolve_batch_size(texts)
+            vectors = []
+            for i in range(0, len(texts), batch_size):
+                vectors.extend(await self._vector.embed_data(texts[i : i + batch_size]))
             embeddings_by_collection[collection] = [
                 (dp, vec, t) for (dp, t), vec in zip(valid_items, vectors)
             ]
@@ -382,15 +399,21 @@ class PostgresHybridAdapter(GraphDBInterface, VectorDBInterface):
         edge_texts = []
         for edge in edges:
             props = edge[3] if len(edge) > 3 and edge[3] else {}
-            edge_text = props.get("edge_text", edge[2])
-            edge_texts.append(edge_text)
+            edge_text = get_edge_retrieval_text(props.get("edge_text"), edge[2])
+            if edge_text:
+                edge_texts.append(edge_text)
 
         edge_type_counts = Counter(edge_texts)
 
         # Embed unique edge types
         unique_texts = list(edge_type_counts.keys())
         if unique_texts:
-            unique_vectors = await self._vector.embed_data(unique_texts)
+            batch_size = self._resolve_batch_size(unique_texts)
+            unique_vectors = []
+            for i in range(0, len(unique_texts), batch_size):
+                unique_vectors.extend(
+                    await self._vector.embed_data(unique_texts[i : i + batch_size])
+                )
             text_to_vector = dict(zip(unique_texts, unique_vectors))
         else:
             text_to_vector = {}

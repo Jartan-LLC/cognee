@@ -46,6 +46,7 @@ from cognee.api.v1.users.routers import (
     get_user_id_by_email_router,
 )
 from cognee.api.v1.api_keys.routers import get_api_key_management_router
+from cognee.api.v1.agents.routers import get_agents_router
 from cognee.api.v1.activity.routers import get_activity_router
 from cognee.api.v1.sessions import get_sessions_router
 from cognee.modules.users.methods.get_authenticated_user import REQUIRE_AUTHENTICATION
@@ -97,6 +98,19 @@ async def lifespan(app: FastAPI):
     logger.info("Backend server has started")
 
     yield
+
+    # Flush and close all cached database adapters so Ladybug can
+    # CHECKPOINT its WAL before the process exits.  Without this,
+    # a SIGTERM during an active WAL write leaves a half-written
+    # record on disk → "Corrupted wal file" on next startup.
+    logger.info("Shutting down: closing cached database engines")
+    from cognee.infrastructure.databases.graph.get_graph_engine import _create_graph_engine
+    from cognee.infrastructure.databases.vector.create_vector_engine import (
+        _create_vector_engine,
+    )
+
+    _create_graph_engine.cache_clear()
+    _create_vector_engine.cache_clear()
 
 
 app = FastAPI(debug=app_environment != "prod", lifespan=lifespan)
@@ -286,6 +300,8 @@ app.include_router(
     tags=["health"],
 )
 
+app.include_router(get_agents_router(), prefix="/api/v1/agents")
+
 # Activity / observability
 app.include_router(
     get_activity_router(),
@@ -332,8 +348,27 @@ def start_api_server(host: str = "0.0.0.0", port: int = 8000):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Cognee API server")
+    parser.add_argument(
+        "--agent-mode",
+        action="store_true",
+        default=None,
+        help="Enable agent mode (overrides COGNEE_AGENT_MODE env var)",
+    )
+    args = parser.parse_args()
+
+    from cognee.modules.agents.agent_mode import is_agent_mode_enabled, set_agent_mode
+
+    if args.agent_mode:
+        set_agent_mode(True)
+
+    default_port = 8011 if is_agent_mode_enabled() else 8000
+
     logger = setup_logging()
 
     start_api_server(
-        host=os.getenv("HTTP_API_HOST", "0.0.0.0"), port=int(os.getenv("HTTP_API_PORT", 8000))
+        host=os.getenv("HTTP_API_HOST", "0.0.0.0"),
+        port=int(os.getenv("HTTP_API_PORT", default_port)),
     )

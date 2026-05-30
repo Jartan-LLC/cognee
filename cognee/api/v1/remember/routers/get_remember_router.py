@@ -1,3 +1,4 @@
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -7,7 +8,7 @@ from fastapi import Form, File, UploadFile as UF, Depends
 from typing import List, Optional, Union, Literal, Annotated
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from cognee.memory import QAEntry, TraceEntry, FeedbackEntry
+from cognee.memory import QAEntry, TraceEntry, FeedbackEntry, SkillRunEntry
 from cognee.modules.users.models import User
 from cognee.modules.users.methods import get_authenticated_user
 from cognee.shared.utils import send_telemetry
@@ -35,7 +36,19 @@ def get_remember_router() -> APIRouter:
         node_set: Optional[List[str]] = Form(default=[""], example=[""]),
         run_in_background: Optional[bool] = Form(default=False),
         custom_prompt: Optional[str] = Form(default=""),
-        chunks_per_batch: Optional[int] = Form(default=10),
+        chunk_size: Optional[int] = Form(default=4096),
+        chunks_per_batch: Optional[int] = Form(default=36),
+        ontology_key: Optional[List[str]] = Form(
+            default=None,
+            examples=[[]],
+            description="Reference to one or more previously uploaded ontologies",
+        ),
+        graph_model: Optional[str] = Form(
+            default=None,
+            examples=[""],
+            description="JSON-serialised graph model schema (same format as the cognify endpoint).",
+        ),
+        content_type: Optional[str] = Form(default=None, examples=[""]),
         user: User = Depends(get_authenticated_user),
     ):
         """
@@ -51,7 +64,11 @@ def get_remember_router() -> APIRouter:
         - **node_set** (Optional[List[str]]): Node identifiers for graph organisation.
         - **run_in_background** (Optional[bool]): Run the cognify step asynchronously (default: False).
         - **custom_prompt** (Optional[str]): Custom prompt for entity extraction.
+        - **chunk_size** (Optional[int]): Maximum tokens per chunk. Defaults to automatic
+          model-based sizing.
         - **chunks_per_batch** (Optional[int]): Chunks per cognify batch.
+        - **ontology_key** (Optional[List[str]]): Reference to one or more previously uploaded ontology files to use for knowledge graph construction.
+        - **graph_model** (Optional[str]): JSON-serialised graph model schema (same dict format accepted by the cognify endpoint).
 
         Either datasetName or datasetId must be provided.
 
@@ -76,8 +93,36 @@ def get_remember_router() -> APIRouter:
             )
 
         from cognee.api.v1.remember import remember as cognee_remember
+        from cognee.api.v1.ontologies.ontologies import OntologyService
+        from cognee.shared.graph_model_utils import graph_schema_to_graph_model
 
         try:
+            config_to_use = None
+            if ontology_key and ontology_key != [""]:
+                ontology_service = OntologyService()
+                ontology_contents = ontology_service.get_ontology_contents(ontology_key, user)
+
+                from cognee.modules.ontology.ontology_config import Config
+                from cognee.modules.ontology.rdf_xml.RDFLibOntologyResolver import (
+                    RDFLibOntologyResolver,
+                )
+                from io import StringIO
+
+                ontology_streams = [StringIO(content) for content in ontology_contents]
+                config_to_use: Config = {
+                    "ontology_config": {
+                        "ontology_resolver": RDFLibOntologyResolver(ontology_file=ontology_streams)
+                    }
+                }
+
+            graph_model_parsed = None
+            if graph_model:
+                try:
+                    graph_model_schema = json.loads(graph_model)
+                    graph_model_parsed = graph_schema_to_graph_model(graph_model_schema)
+                except (json.JSONDecodeError, Exception) as parse_err:
+                    logger.warning("remember: invalid graph_model JSON, ignoring: %s", parse_err)
+
             result = await cognee_remember(
                 data,
                 dataset_name=datasetName,
@@ -87,10 +132,20 @@ def get_remember_router() -> APIRouter:
                 node_set=node_set if node_set != [""] else None,
                 run_in_background=run_in_background or False,
                 custom_prompt=custom_prompt or None,
+                chunk_size=chunk_size,
                 chunks_per_batch=chunks_per_batch,
+                content_type=content_type,
+                **({"config": config_to_use} if config_to_use else {}),
+                **({"graph_model": graph_model_parsed} if graph_model_parsed else {}),
             )
 
             return jsonable_encoder(result.to_dict())
+        except ValueError as error:
+            logger.error("Remember endpoint validation error: %s", error, exc_info=True)
+            return JSONResponse(
+                status_code=409,
+                content={"error": "Invalid request data for remember operation."},
+            )
         except Exception as error:
             logger.error("Remember endpoint error: %s", error, exc_info=True)
             return JSONResponse(
@@ -102,15 +157,17 @@ def get_remember_router() -> APIRouter:
         """JSON body for the typed-entry remember endpoint.
 
         ``entry`` is a discriminated union — set ``type`` to ``qa``,
-        ``trace``, or ``feedback`` and include the corresponding fields.
+        ``trace``, ``feedback``, or ``skill_run`` and include the
+        corresponding fields.
         """
 
         entry: Annotated[
-            Union[QAEntry, TraceEntry, FeedbackEntry],
+            Union[QAEntry, TraceEntry, FeedbackEntry, SkillRunEntry],
             Field(discriminator="type"),
         ]
         dataset_name: str = "main_dataset"
-        session_id: str
+        session_id: Optional[str] = None
+        skill_improvement: Optional[dict] = None
 
     @router.post("/entry", response_model=dict)
     @log_usage(function_name="POST /v1/remember/entry", log_type="api_endpoint")
@@ -120,9 +177,10 @@ def get_remember_router() -> APIRouter:
     ):
         """Store a typed memory entry in the session cache.
 
-        Accepts a discriminated union of ``QAEntry``, ``TraceEntry``, or
-        ``FeedbackEntry`` and dispatches to the matching SessionManager
-        method. Always requires ``session_id``.
+        Accepts a discriminated union of ``QAEntry``, ``TraceEntry``,
+        ``FeedbackEntry``, or ``SkillRunEntry`` and dispatches to the
+        matching ``remember`` path. Session-backed entries require
+        ``session_id``; ``SkillRunEntry`` can persist with or without one.
 
         ## Response
         The returned ``RememberResult`` includes ``entry_type`` and
@@ -148,6 +206,7 @@ def get_remember_router() -> APIRouter:
                 dataset_name=payload.dataset_name,
                 session_id=payload.session_id,
                 user=user,
+                skill_improvement=payload.skill_improvement,
             )
             return jsonable_encoder(result.to_dict())
         except ValueError as error:
